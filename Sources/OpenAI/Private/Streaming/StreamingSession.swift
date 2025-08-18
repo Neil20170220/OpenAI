@@ -23,6 +23,8 @@ final class StreamingSession<Interpreter: StreamInterpreter>: NSObject, Identifi
     private let onReceiveContent: (@Sendable (StreamingSession, ResultType) -> Void)?
     private let onProcessingError: (@Sendable (StreamingSession, Error) -> Void)?
     private let onComplete: (@Sendable (StreamingSession, Error?) -> Void)?
+    
+    private var response: URLResponse?
 
     init(
         urlSessionFactory: URLSessionFactory = FoundationURLSessionFactory(),
@@ -76,12 +78,13 @@ final class StreamingSession<Interpreter: StreamInterpreter>: NSObject, Identifi
         completionHandler: @escaping @Sendable (URLSession.ResponseDisposition) -> Void
     ) {
         executionSerializer.dispatch {
-            if let httpResponse = response as? HTTPURLResponse, httpResponse.statusCode >= 400 {
-                let error = OpenAIError.statusError(response: httpResponse, statusCode: httpResponse.statusCode)
+            if let httpResponse = response as? HTTPURLResponse, httpResponse.statusCode >= 500 {
+                let error = OpenAIError.statusError(response: httpResponse, statusCode: httpResponse.statusCode, bodyError: nil)
                 self.onProcessingError?(self, error)
                 completionHandler(.cancel)
                 return
             }
+            self.response = response
             completionHandler(.allow)
         }
     }
@@ -101,7 +104,13 @@ final class StreamingSession<Interpreter: StreamInterpreter>: NSObject, Identifi
             self.onReceiveContent?(self, content)
         } onError: { [weak self] error in
             guard let self else { return }
-            self.onProcessingError?(self, error)
+            let finalError: Error =
+                if let httpResponse = self.response as? HTTPURLResponse, httpResponse.statusCode >= 400 {
+                    OpenAIError.statusError(response: httpResponse, statusCode: httpResponse.statusCode, bodyError: error)
+                } else {
+                    error
+                }
+            self.onProcessingError?(self, finalError)
         }
     }
 }

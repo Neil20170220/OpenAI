@@ -13,7 +13,7 @@ import FoundationNetworking
 
 public enum OpenAIError: DescribedError {
     case emptyData
-    case statusError(response: HTTPURLResponse, statusCode: Int)
+    case statusError(response: HTTPURLResponse, statusCode: Int, bodyError: Error?)
 }
 
 public struct APIError: Error, Decodable, Equatable {

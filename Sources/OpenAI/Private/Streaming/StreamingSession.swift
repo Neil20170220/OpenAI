@@ -57,7 +57,8 @@ final class StreamingSession<Interpreter: StreamInterpreter>: NSObject, Identifi
     
     func urlSession(_ session: any URLSessionProtocol, task: any URLSessionTaskProtocol, didCompleteWithError error: (any Error)?) {
         executionSerializer.dispatch {
-            self.onComplete?(self,error)
+            let finalError = self.finalError(error: error)
+            self.onComplete?(self, finalError)
         }
     }
     
@@ -94,23 +95,36 @@ final class StreamingSession<Interpreter: StreamInterpreter>: NSObject, Identifi
         didReceive challenge: URLAuthenticationChallenge,
         completionHandler: @escaping @Sendable (URLSession.AuthChallengeDisposition, URLCredential?) -> Void
     ) {
-        guard let sslDelegate else { return completionHandler(.performDefaultHandling, nil) }
+        guard let sslDelegate else {
+            return completionHandler(.performDefaultHandling, nil)
+        }
         sslDelegate.urlSession(session, didReceive: challenge, completionHandler: completionHandler)
     }
 
     private func subscribeToParser() {
         interpreter.setCallbackClosures { [weak self] content in
-            guard let self else { return }
+            guard let self else {
+                return
+            }
+            if let finalError = self.finalError(error: nil) {
+                self.onProcessingError?(self, finalError)
+                return
+            }
             self.onReceiveContent?(self, content)
         } onError: { [weak self] error in
-            guard let self else { return }
-            let finalError: Error =
-                if let httpResponse = self.response as? HTTPURLResponse, httpResponse.statusCode >= 400 {
-                    OpenAIError.statusError(response: httpResponse, statusCode: httpResponse.statusCode, bodyError: error)
-                } else {
-                    error
-                }
+            guard let self else {
+                return
+            }
+            let finalError: Error = self.finalError(error: error) ?? error
             self.onProcessingError?(self, finalError)
+        }
+    }
+    
+    private func finalError(error: Error?) -> Error? {
+        if let httpResponse = response as? HTTPURLResponse, httpResponse.statusCode >= 400 {
+            return OpenAIError.statusError(response: httpResponse, statusCode: httpResponse.statusCode, bodyError: error)
+        } else {
+            return error
         }
     }
 }
